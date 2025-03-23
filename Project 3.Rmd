@@ -1,0 +1,192 @@
+---
+title: "Data 607 Project 3"
+author: "Jayden Jiang"
+date: "2025-03-22"
+output: html_document
+---
+
+# "Which Are The Most Valued Data Science Skills?"
+#### Team Members: Jayden Jiang, Sergio Belich
+
+## Introduction
+##### Data science continues to grow in demand across industries, the skill sets required for these roles vary widely depending on region, company, and job level.
+##### For this project, we aims to answer the central question: "Which are the most valued data science skills?"
+
+##### To explore this, we collect and analyze job posting from multiple countries using a structed, reproducible workflow. The goal is to extract insights about hte most frequently listed skills across geographies, companies, and job level, and provide evidence-based guidance for job seekers and educators. 
+
+## Overall Project Approach
+#### 1. Collaboration Tools - to ensure effective team collaboration and transparency, we will use Zoom for video communication, GitHub for code sharing, Google Doc for project documentation, R Studio for loading, cleaning, tidying, transforming, and analyzing Data, and Microsoft PowerPoint for presentation slides. 
+
+#### 2. Data Collection & Loading - collected a structed CSV dataset of over 12,000 job postings from LinkedIn, containing fields such as job title, company, location, skills, job level, and country.
+
+#### 3. Word Tokenization - break down the job_skills string field into individual skill tokens for processing
+
+#### 4. Word Classification 
+
+#### 5. Labeling Original Data - 
+
+#### 6. Data Tidying & Transformation - cleaning and splitting the job_skills field, normalizing skill names, and creating tidy long format tables for analysis.
+
+#### 7. Exploratory Data Analysis - Geographic comparison, employer expectations, employee skill profiles, and job level trends. 
+
+## Library
+```{r}
+library(tidyverse)
+library(knitr)
+library(ggraph)
+library(stringi)
+library(tidytext)
+library(stringr)
+library(purrr)
+library(dplyr)
+library(tidyr)
+library(readr)
+library(ggplot2)
+```
+
+## Load and Prepare Dataset
+```{r}
+job_data <- read.csv("https://raw.githubusercontent.com/JaydeeJan/Data-607-Project-3-Team-6/refs/heads/main/Data-Science%20Job%20Postings.csv")
+job_data <- job_data %>%
+  filter(!is.na(job_skills)) %>%
+  mutate(job_id = row_number())
+```
+
+## Tokenization of Skills
+```{r}
+# Step 1: Separate job_skills using commas as delimiters
+job_data <- job_data %>%
+  mutate(job_skills = stringi::stri_enc_toutf8(job_skills, validate = TRUE))
+
+# Step 2: Extract and clean individual skills
+skill_terms <- job_data %>%
+  pull(job_skills) %>%
+  tolower() %>%
+  str_split(",") %>%
+  unlist() %>%
+  str_replace_all("[^a-z0-9 ]", "") %>%
+  str_squish()
+
+# Step 3: Remove stop words and count term frequency
+data("stop_words")
+skill_terms_clean <- tibble(term = skill_terms) %>%
+  filter(term != "") %>%
+  anti_join(stop_words, by = c("term" = "word")) %>%
+  count(term, sort = TRUE)
+
+head(skill_terms_clean, 20)
+
+job_data <- job_data %>%
+  mutate(job_skills = stringi::stri_enc_toutf8(job_skills, validate = TRUE))
+
+skill_tokens <- job_data %>%
+  select(job_id, job_skills, search_country, company, job_level, first_seen) %>%
+  separate_rows(job_skills, sep = ",") %>%
+  mutate(skill = stringi::stri_trim_both(stringi::stri_trans_tolower(job_skills))) %>%
+  filter(skill != "")
+
+```
+
+## Word Classification 
+```{r}
+# Step 1: Create frequency-based metrics
+term_metrics <- skill_tokens %>%
+  count(skill, sort = TRUE) %>%
+  rename(frequency = n)
+
+# Step 2: Export terms to CSV for manual labeling
+write_csv(term_metrics, "term_metrics_for_labeling.csv")
+
+# Step 3: Define labeled skill dictionary manually
+skill_dict <- tibble(
+  skill = c(
+    "python", "sql", "r", "aws", "excel", "communication", "machine learning", 
+    "data analysis", "data visualization", "tableau", "power bi", "hadoop",
+    "spark", "statistics", "cloud computing", "nlp", "deep learning",
+    "big data", "data wrangling", "data engineering"
+  ),
+  is_data_skill = TRUE
+)
+
+# Step 4: Classify skill tokens based on manual labels
+classified_skills <- skill_tokens %>%
+  left_join(skill_dict, by = "skill") %>%
+  filter(is_data_skill == TRUE)
+
+# Sample dictionary (replace with actual manually labeled dictionary)
+skill_dict <- tibble(
+  skill = c(
+    "python", "sql", "r", "aws", "excel", "communication", "machine learning", 
+    "data analysis", "data visualization", "tableau", "power bi", "hadoop",
+    "spark", "statistics", "cloud computing", "nlp", "deep learning",
+    "big data", "data wrangling", "data engineering"
+  ),
+  is_data_skill = TRUE
+)
+
+classified_skills <- skill_tokens %>%
+  left_join(skill_dict, by = "skill") %>%
+  filter(is_data_skill == TRUE)
+```
+
+## Label Original Data
+```{r}
+# Step 1: Remove NAs
+labeled_skills <- classified_skills %>%
+  filter(!is.na(skill))
+
+# Step 2: Match labeled skills to job posts and tag as 1 if present
+labeled_skills <- labeled_skills %>%
+  mutate(value = 1)
+
+# Step 3: Create job-skill matrix for analysis
+job_skill_matrix <- labeled_skills %>%
+  select(job_id, skill, value) %>%
+  distinct() %>%
+  pivot_wider(
+    id_cols = job_id,
+    names_from = skill,
+    values_from = value,
+    values_fill = list(value = 0)
+  )
+```
+
+## Tidy Data
+```{r}
+# Convert to long format for analysis
+job_skill_long <- job_skill_matrix %>%
+  pivot_longer(
+    cols = -job_id,
+    names_to = "skill",
+    values_to = "has_skill"
+  ) %>%
+  filter(has_skill == 1) %>%
+  left_join(job_data %>% select(job_id, search_country, company, job_level), by = "job_id")
+
+print(job_skill_long)
+```
+
+## Analysis of Data
+```{r}
+# Question 1: Most Common Skills by Country
+
+skill_country <- classified_skills %>%
+  count(search_country, skill, sort = TRUE) %>%
+  filter(search_country %in% c("United States", "United Kingdom", "Canada", "Australia"))
+
+skill_country %>%
+  group_by(search_country) %>%
+  slice_max(order_by = n, n = 10) %>%
+  ggplot(aes(x = reorder(skill, n), y = n, fill = search_country)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~search_country, scales = "free_y") +
+  coord_flip() +
+  labs(title = "Top 10 Data Science Skills by Country", x = "Skill", y = "Count") +
+  theme_minimal()
+```
+
+```{r}
+# Question 2: Most Common Skills by Company
+
+```
+
