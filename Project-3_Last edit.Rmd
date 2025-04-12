@@ -1,0 +1,284 @@
+---
+title: "Data 607 Project 3"
+author: "Jayden Jiang, Sergio Belich"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    theme: cosmo
+---
+
+```{r setup-css, include=FALSE}
+# Create a CSS file for print styles
+cat("
+@media print {
+  #TOC, #header, .tocify {
+    display: none !important;
+  }
+  body {
+    padding-top: 0 !important;
+  }
+}
+", file = "print_styles.css")
+
+# Add the CSS to the document
+css_file <- "print_styles.css"
+```
+
+<style type="text/css">
+@media print {
+  #TOC, #header, .tocify {
+    display: none !important;
+  }
+  body {
+    padding-top: 0 !important;
+  }
+}
+</style>
+
+# "Which Are The Most Valued Data Science Skills?"
+#### Team Members: Jayden Jiang, Sergio Belich
+
+## Introduction
+##### Data science continues to grow in demand across industries, the skill sets required for these roles vary widely depending on region, company, and job level.
+##### For this project, we aims to answer the central question: "Which are the most valued data science skills?"
+
+##### To explore this, we collect and analyze job posting from multiple countries using a structed, reproducible workflow. The goal is to extract insights about hte most frequently listed skills across geographies, companies, and job level, and provide evidence-based guidance for job seekers and educators. 
+
+## Overall Project Approach
+#### 1. Collaboration Tools - to ensure effective team collaboration and transparency, we will use Zoom for video communication, GitHub for code sharing, Google Doc for project documentation, R Studio for loading, cleaning, tidying, transforming, and analyzing Data, and Microsoft PowerPoint for presentation slides. 
+
+#### 2. Data Collection & Loading - collected a structed CSV dataset of over 12,000 job postings from LinkedIn/Kaggle, containing fields such as job title, company, location, skills, job level, and country.
+
+#### 3. Word Tokenization - break down the job_skills string field into individual skill tokens for processing
+
+#### 4. Word Classification - ounts the frequency of raw skill tokens, exports them for manual review, creates a refined dictionary of core skills, and filters the data to retain only relevant data science skills.
+
+#### 5. Labeling Original Data - assigns a binary indicator for each classified skill in job postings and pivots the data into a job-skill matrix for subsequent analysis
+
+#### 6. Data Tidying & Transformation - cleaning and splitting the job_skills field, normalizing skill names, and creating tidy long format tables for analysis.
+
+#### 7. Exploratory Data Analysis - Geographic comparison, employer expectations, employee skill profiles, and job level trends. 
+
+## Library
+```{r Library}
+library(tidyverse)
+library(knitr)
+library(ggraph)
+library(stringi)
+library(tidytext)
+library(stringr)
+library(purrr)
+library(dplyr)
+library(tidyr)
+library(readr)
+library(ggplot2)
+```
+
+## Load and Prepare Dataset
+```{r Load-and-Prepare-Dataset}
+job_data <- read.csv("https://raw.githubusercontent.com/JaydeeJan/Data-607-Project-3-Team-6/refs/heads/main/Data-Science%20Job%20Postings.csv")
+#job_data <- read.csv("Data-Science Job Postings.csv")
+job_data <- job_data %>%
+  filter(!is.na(job_skills)) %>%
+  mutate(job_id = row_number())
+```
+
+## Tokenization of Skills
+```{r Tokenization-of-Skills}
+
+# Step 1: Separate job_skills using commas as delimiters and trim left spaces
+job_data <- job_data %>%
+  mutate(job_skills = stringi::stri_enc_toutf8(job_skills, validate = TRUE)) %>%
+  mutate(job_skills = str_trim(job_skills, side = "left"))
+
+# Step 1: Separate job_skills using commas as delimiters
+#job_data <- job_data %>%
+#  mutate(job_skills = stringi::stri_enc_toutf8(job_skills, validate = TRUE))
+
+# Step 2: Extract and clean individual skills
+skill_terms <- job_data %>%
+  pull(job_skills) %>%
+  tolower() %>%
+  str_split(",") %>%
+  unlist() %>%
+  str_replace_all("[^a-z0-9 ]", "") %>%
+  str_squish()
+
+# Step 3: Remove stop words and count term frequency
+data("stop_words")
+filter_stop_words <- stop_words %>%
+  filter(word != "r")
+
+skill_terms_clean <- tibble(term = skill_terms) %>%
+  filter(term != "") %>%
+  anti_join(filter_stop_words, by = c("term" = "word")) %>%
+  count(term, sort = TRUE)
+
+head(skill_terms_clean, 20)
+
+job_data <- job_data %>%
+  mutate(job_skills = stringi::stri_enc_toutf8(job_skills, validate = TRUE))
+
+skill_tokens <- job_data %>%
+  select(job_id, job_skills, search_country, company, job_level, first_seen) %>%
+  separate_rows(job_skills, sep = ",") %>%
+  mutate(skill = stringi::stri_trim_both(stringi::stri_trans_tolower(job_skills))) %>%
+  filter(skill != "")
+
+```
+
+## Word Classification 
+```{r Word-Classification }
+# Step 1: Create frequency-based metrics
+term_metrics <- skill_tokens %>%
+  count(skill, sort = TRUE) %>%
+  rename(frequency = n)
+
+# Step 2: Export terms to CSV for manual labeling
+write_csv(term_metrics, "term_metrics_for_labeling.csv")
+
+# Step 3: Extract the top N skills from skill_terms_clean
+top_n_skills <- 20  # starting with 20
+top_skills <- skill_terms_clean %>%
+  slice_head(n = top_n_skills) %>%
+  pull(term)
+
+# Create skill dictionary using these top skills
+skill_dict <- tibble(
+  skill = top_skills,
+  is_data_skill = TRUE
+)
+
+# Now use skill_dict in classified_skills code
+classified_skills <- skill_tokens %>%
+  left_join(skill_dict, by = c("skill" = "skill")) %>%
+  filter(is_data_skill == TRUE)
+
+# Step 3: Define labeled skill dictionary manually
+#skill_dict <- tibble(
+  # skill = c(
+    # "python", "sql", "r", "aws", "excel", "communication", "machine learning", 
+    # "data analysis", "data visualization", "tableau", "power bi", "hadoop",
+    # "spark", "statistics", "cloud computing", "nlp", "deep learning",
+    # "big data", "data wrangling", "data engineering"
+  # ),
+  # is_data_skill = TRUE
+# )
+
+# Step 4: Classify skill tokens based on manual labels
+#classified_skills <- skill_tokens %>%
+#  left_join(skill_dict, by = "skill") %>%
+#  filter(is_data_skill == TRUE)
+
+```
+
+## Label Original Data
+```{r Label-Original-Data}
+# Step 1: Remove NAs
+labeled_skills <- classified_skills %>%
+  filter(!is.na(skill))
+
+# Step 2: Match labeled skills to job posts and tag as 1 if present
+labeled_skills <- labeled_skills %>%
+  mutate(value = 1)
+
+# Step 3: Create job-skill matrix for analysis
+job_skill_matrix <- labeled_skills %>%
+  select(job_id, skill, value) %>%
+  distinct() %>%
+  pivot_wider(
+    id_cols = job_id,
+    names_from = skill,
+    values_from = value,
+    values_fill = list(value = 0)
+  )
+```
+
+## Tidy Data
+```{r Tidy-Data}
+# Convert to long format for analysis
+job_skill_long <- job_skill_matrix %>%
+  pivot_longer(
+    cols = -job_id,
+    names_to = "skill",
+    values_to = "has_skill"
+  ) %>%
+  filter(has_skill == 1) %>%
+  left_join(job_data %>% select(job_id, search_country, company, job_level), by = "job_id")
+
+print(job_skill_long)
+```
+
+## Analysis of Data
+```{r Analysis-of-Data}
+# Let's start easy with Top 10 Data Science Skills Requested (for all data)
+# Get the top 10 most frequently requested skills across all countries
+top_skills_all <- classified_skills %>%
+  count(skill, sort = TRUE) %>%
+  slice_head(n = 10)
+
+# Create a bar chart
+ggplot(top_skills_all, aes(x = reorder(skill, n), y = n, fill = skill)) +
+  geom_col() +
+  coord_flip() +
+  labs(
+    title = "Top 10 Most Requested Data Science Skills",
+    subtitle = "Based on job posting analysis across all countries",
+    x = "Skill",
+    y = "Number of Job Postings",
+    caption = "Data source: LinkedIn/Kaggle job postings dataset"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    axis.title = element_text(face = "bold"),
+    legend.position = "none",  # Remove the legend since skill names are on the y-axis
+    plot.margin = margin(0.5, 0.5, 0.5, 0.5, "cm")  # Adjust margins (top, right,             bottom, left)
+    ) +
+    scale_fill_viridis_d(option = "D")  # Use a color-blind friendly palette
+
+# then                  Top 10 Data Science Skills Requested by Country
+
+# Filter for major countries with sufficient data
+major_countries <- c("United States", "United Kingdom", "Canada", "Australia", "Germany", "India")
+
+# Get top skills by country
+skills_by_country <- classified_skills %>%
+  filter(search_country %in% major_countries) %>%
+  count(search_country, skill, sort = TRUE) %>%
+  group_by(search_country) %>%
+  slice_max(order_by = n, n = 10) %>%
+  ungroup()
+
+# Create a faceted bar chart for top skills by country
+ggplot(skills_by_country, aes(x = reorder_within(skill, n, search_country), y = n, fill = search_country)) +
+  geom_col(show.legend = FALSE) +
+  coord_flip() +
+  facet_wrap(~ search_country, scales = "free_y") +
+  scale_x_reordered() +  # Required for reorder_within
+  labs(
+    title = "Top 10 Data Science Skills by Country",
+    subtitle = "Based on job posting analysis",
+    x = "Skill",
+    y = "Number of Job Postings",
+    caption = "Data source: LinkedIn/Kaggle job postings dataset"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    axis.title = element_text(face = "bold"),
+    strip.background = element_rect(fill = "lightgray"),
+    strip.text = element_text(face = "bold"),
+    plot.margin = margin(0.5, 0.5, 0.5, 0.5, "cm")
+  )
+
+
+```
+
+## Conclusion
+
+##### Python, SQL, and Data Analysis are among the top three most in-demand skills worldwide, with technical skills dominating global rankings across all countries, though regional variations influence the importance of specific skills. Despite the emphasis on technical expertise, communication skills remain highly valued as a key soft skill. Additionally, cloud platforms like AWS feature prominently in job requirements, highlighting their growing significance in the workforce.
+
+
